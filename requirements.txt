@@ -1,0 +1,10 @@
+langchain
+chromadb
+transformers>=4.36.0
+sentence-transformers
+torch
+rouge-score
+nltk
+scikit-learn
+pandas
+matplotlib
