@@ -54,7 +54,8 @@ def evaluate_chunk_size(chunk_size, embed):
         src_docs = item["source_documents"]
 
         # Retrieve top documents
-        retrieved_docs = retriever.get_relevant_documents(q)
+        retrieved_docs = retriever._get_relevant_documents(q)
+
         retrieved_sources = [doc.metadata["source"] for doc in retrieved_docs]
 
         # Build context
