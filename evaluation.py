@@ -1,52 +1,43 @@
-import json, os, time
+import json, os
 from rouge_score import rouge_scorer
 from nltk.translate.bleu_score import sentence_bleu
 from sklearn.metrics.pairwise import cosine_similarity
 
-from langchain_community.document_loaders import TextLoader
+# UPDATED IMPORTS (new packages)
 from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.document_loaders import TextLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_community.llms import HuggingFacePipeline
-from langchain.chains import RetrievalQA
+from langchain_community.chains import RetrievalQA
 
 from transformers import pipeline
 import numpy as np
 
 
 def evaluate_chunk_size(chunk_size, embed):
-    print(f"\n=== Evaluating chunk_size = {chunk_size} ===")
 
-    # Load docs
-    print("Loading corpus...")
+    # Load corpus files
     docs = []
     for file in os.listdir("corpus"):
         loader = TextLoader(f"corpus/{file}")
         docs += loader.load()
 
-    print(f"Loaded {len(docs)} documents.")
-
-    # Split docs
-    print("Splitting into chunks...")
+    # Split text into chunks
     splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=50)
     chunks = splitter.split_documents(docs)
-    print(f"Total chunks: {len(chunks)}")
 
-    # Build vector DB
-    print("Building vector DB...")
+    # Create vector store
     vectordb = Chroma.from_documents(
-        chunks, embed, persist_directory=f"db_{chunk_size}"
+        chunks,
+        embed,
+        persist_directory=f"db_{chunk_size}"
     )
 
-    # Load LLM only once
-    print("Loading FLAN-T5 Large...")
-    llm = HuggingFacePipeline(
-        pipeline=pipeline(
-            "text2text-generation",
-            model="google/flan-t5-large",
-            max_new_tokens=200,
-            device=-1  # CPU
-        )
+    # LLM model
+    llm = pipeline(
+        "text2text-generation",
+        model="google/flan-t5-large",
+        max_new_tokens=200
     )
 
     qa = RetrievalQA.from_chain_type(
@@ -55,16 +46,13 @@ def evaluate_chunk_size(chunk_size, embed):
         return_source_documents=True
     )
 
+    # Load dataset
     dataset = json.load(open("test_dataset.json"))["test_questions"]
-    scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
-
     results = []
 
-    print("Starting evaluation loop...")
+    scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
 
-    for idx, item in enumerate(dataset):
-        print(f"\n→ Question {idx+1}/{len(dataset)}")
-
+    for item in dataset:
         q = item["question"]
         gt = item["ground_truth"]
         src_docs = item["source_documents"]
@@ -73,15 +61,18 @@ def evaluate_chunk_size(chunk_size, embed):
         ans = res["result"]
         retrieved = [doc.metadata["source"] for doc in res["source_documents"]]
 
+        # Evaluate retrieval metrics
         hit = int(any(s in retrieved for s in src_docs))
-        mrr = next((1/(i+1) for i, d in enumerate(retrieved) if d in src_docs), 0)
+        mrr = next((1 / (i + 1)
+                   for i, d in enumerate(retrieved)
+                   if d in src_docs), 0)
         p_at_5 = len([d for d in retrieved if d in src_docs]) / len(retrieved)
 
+        # Evaluate answer quality
         rougeL = scorer.score(ans, gt)["rougeL"].fmeasure
         bleu = sentence_bleu([gt.split()], ans.split())
         cos = cosine_similarity(
-            [embed.embed_query(ans)],
-            [embed.embed_query(gt)]
+            [embed.embed_query(ans)], [embed.embed_query(gt)]
         )[0][0]
 
         results.append({
@@ -94,25 +85,21 @@ def evaluate_chunk_size(chunk_size, embed):
             "cosine_similarity": float(cos)
         })
 
-        print(f"✓ Done | HIT={hit} | MRR={mrr:.3f} | ROUGE={rougeL:.3f}")
-
     return results
 
 
+
 def main():
-    print("Loading embedding model...")
-    embed = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embed = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
 
     final = {}
-
     for size in [300, 600, 1000]:
         final[size] = evaluate_chunk_size(size, embed)
-        json.dump(final, open("test_results_partial.json", "w"), indent=4)
-        print(f"Partial results saved for chunk {size}")
 
     json.dump(final, open("test_results.json", "w"), indent=4)
-    print("\n✔ Evaluation Finished!")
-    print("Output saved → test_results.json")
+    print("Evaluation complete → test_results.json created!")
 
 
 if __name__ == "__main__":
